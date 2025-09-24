@@ -43,10 +43,6 @@ local prevToggles = {
 }
 
 local movementValues = { WalkSpeed = 16, JumpHeight = 7, FlingStrength = 2000 }
-local SelectedTargets = {}
-local FlingActive = false
-getgenv().OldPos = nil
-getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
 -- Helper for slider animations
 local function updateSliderFillSmooth(sliderObj, fraction)
@@ -234,14 +230,14 @@ local function createESP(player)
         highlight.Parent = char
 
         local billboard = Instance.new("BillboardGui")
-        billboard.Size = UDim2.new(0, 150, 0, 40)
-        billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+        billboard.Size = UDim2.new(0, 200, 0, 60) -- Increased size for larger text
+        billboard.StudsOffset = Vector3.new(0, 3, 0) -- Adjusted offset for larger GUI
         billboard.AlwaysOnTop = true
         billboard.Adornee = head
         billboard.Parent = head
 
         local nameLabel = Instance.new("TextLabel")
-        nameLabel.Size = UDim2.new(1, 0, 0.25, 0)
+        nameLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
         nameLabel.BackgroundTransparency = 1
         nameLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
         nameLabel.TextScaled = true
@@ -250,8 +246,8 @@ local function createESP(player)
         nameLabel.Parent = billboard
 
         local healthLabel = Instance.new("TextLabel")
-        healthLabel.Size = UDim2.new(1, 0, 0.25, 0)
-        healthLabel.Position = UDim2.new(0, 0, 0.25, 0)
+        healthLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
+        healthLabel.Position = UDim2.new(0, 0, 0.33, 0) -- Adjusted position
         healthLabel.BackgroundTransparency = 1
         healthLabel.TextColor3 = Color3.new(0.8, 0, 0)
         healthLabel.TextScaled = true
@@ -260,8 +256,8 @@ local function createESP(player)
         healthLabel.Parent = billboard
 
         local distanceLabel = Instance.new("TextLabel")
-        distanceLabel.Size = UDim2.new(1, 0, 0.25, 0)
-        distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+        distanceLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
+        distanceLabel.Position = UDim2.new(0, 0, 0.66, 0) -- Adjusted position
         distanceLabel.BackgroundTransparency = 1
         distanceLabel.TextColor3 = Color3.new(0, 0.8, 0)
         distanceLabel.TextScaled = true
@@ -322,6 +318,10 @@ local SpinTab = Window:CreateTab("Spin & Godmode", 4483362458)
 local spinEnabled = false
 local spinSpeed = 60
 local godmodeEnabled = false
+local flingEnabled = false
+local SelectedTargets = {}
+getgenv().OldPos = nil
+getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
 -- Spin Toggle
 SpinTab:CreateToggle({
@@ -354,7 +354,28 @@ SpinTab:CreateToggle({
     end
 })
 
--- Multi-Target Fling
+-- Load Universal Script Button
+SpinTab:CreateButton({
+    Name = "Load Universal Script",
+    Callback = function()
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/Executioner11/Universal-Script/main/Universal%20script.txt"))()
+            Rayfield:Notify({
+                Title = "Success",
+                Content = "Universal Script loaded!",
+                Duration = 3
+            })
+        end, function(err)
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Failed to load Universal Script: " .. tostring(err),
+                Duration = 3
+            })
+        end)
+    end
+})
+
+-- Fling Targets Dropdown
 local function getPlayerList()
     local playerList = {}
     for _, player in pairs(Players:GetPlayers()) do
@@ -382,21 +403,22 @@ SpinTab:CreateDropdown({
         end
         Rayfield:Notify({
             Title = "Targets Updated",
-            Content = "Selected " .. #Selected .. " target(s) for flinging",
+            Content = "Selected " .. #Selected .. " target(s)",
             Duration = 2
         })
     end
 })
 
+-- Fling Toggle
 SpinTab:CreateToggle({
     Name = "Fling Targets",
     CurrentValue = false,
     Callback = function(Value)
-        FlingActive = Value
+        flingEnabled = Value
         prevToggles.Fling = Value
-        if FlingActive then
+        if flingEnabled then
             if next(SelectedTargets) == nil then
-                FlingActive = false
+                flingEnabled = false
                 prevToggles.Fling = false
                 SpinTab.Flags["FlingTargets"].Object:Set(false)
                 Rayfield:Notify({
@@ -408,7 +430,7 @@ SpinTab:CreateToggle({
             end
             Rayfield:Notify({
                 Title = "Fling Started",
-                Content = "Flinging " .. #getPlayerList() .. " target(s)",
+                Content = "Flinging " .. #Selected .. " target(s)",
                 Duration = 2
             })
         else
@@ -421,6 +443,7 @@ SpinTab:CreateToggle({
     end
 })
 
+-- Fling Strength Slider
 SpinTab:CreateSlider({
     Name = "Fling Strength",
     Range = {500, 5000},
@@ -433,7 +456,7 @@ SpinTab:CreateSlider({
     end
 })
 
--- Refresh player list when players join/leave
+-- Handle player join/leave for dropdown
 Players.PlayerAdded:Connect(function()
     task.wait(math.random(0.5, 1.5))
     pcall(function()
@@ -448,7 +471,7 @@ Players.PlayerRemoving:Connect(function(player)
     end)
 end)
 
--- Fling Function (Adapted from SkidFling)
+-- Fling Function (SkidFling)
 local function SkidFling(TargetPlayer)
     local Character = LocalPlayer.Character
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
@@ -558,7 +581,7 @@ local function SkidFling(TargetPlayer)
                     FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
                     task.wait()
                 end
-            until Time + TimeToWait < tick() or not FlingActive
+            until Time + TimeToWait < tick() or not flingEnabled
         end
 
         if TRootPart then
@@ -595,7 +618,7 @@ end
 local lastFlingUpdate = 0
 local flingCooldown = 0.5
 local function applyFling()
-    if not FlingActive then return end
+    if not flingEnabled then return end
     if tick() - lastFlingUpdate < flingCooldown then return end
     lastFlingUpdate = tick()
 
@@ -612,7 +635,7 @@ local function applyFling()
     for _, player in pairs(validTargets) do
         pcall(function()
             SkidFling(player)
-            task.wait(0.1)
+            task.wait(0.1) -- Brief wait between targets
         end)
     end
 end
@@ -638,7 +661,7 @@ RunService.Heartbeat:Connect(function(dt)
                 end)
             end
         end
-        if FlingActive then
+        if flingEnabled then
             applyFling()
         end
     end
@@ -664,10 +687,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
         infiniteJumpEnabled = prevToggles.InfiniteJump
         spinEnabled = prevToggles.Spin
         godmodeEnabled = prevToggles.Godmode
-        if prevToggles.Fling then
-            FlingActive = true
-            SpinTab.Flags["FlingTargets"].Object:Set(true)
-        end
+        flingEnabled = prevToggles.Fling
         hitboxESPEnabled = prevToggles.HitboxESP
         nameESPEnabled = prevToggles.NameESP
         healthESPEnabled = prevToggles.HealthESP
@@ -687,7 +707,6 @@ game:BindToClose(function()
             if data.Distance then data.Distance:Destroy() end
         end
         if bodyVel then bodyVel:Destroy() end
-        FlingActive = false
         workspace.FallenPartsDestroyHeight = getgenv().FPDH
     end)
 end)
