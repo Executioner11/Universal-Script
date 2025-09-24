@@ -1,0 +1,693 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Securely load Rayfield with error handling
+local Rayfield
+local success, result = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
+end)
+if success then
+    Rayfield = result
+else
+    warn("Failed to load Rayfield: " .. tostring(result))
+    return -- Exit if Rayfield fails to load
+end
+
+-- Create Window with safe configuration
+local Window = Rayfield:CreateWindow({
+    Name = "Mod Menu",
+    LoadingTitle = "Mod Menu",
+    LoadingSubtitle = "By Executioner",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "RayfieldConfigs",
+        FileName = "FourTabUI"
+    }
+})
+
+-- Track toggles and movement values
+local prevToggles = {
+    Flight = false,
+    NoClip = false,
+    Spin = false,
+    Godmode = false,
+    Fling = false,
+    HitboxESP = false,
+    NameESP = false,
+    HealthESP = false,
+    DistanceESP = false,
+    InfiniteJump = false
+}
+
+local movementValues = { WalkSpeed = 16, JumpHeight = 7, FlingStrength = 2000 }
+local SelectedTargets = {}
+local FlingActive = false
+getgenv().OldPos = nil
+getgenv().FPDH = workspace.FallenPartsDestroyHeight
+
+-- Helper for slider animations
+local function updateSliderFillSmooth(sliderObj, fraction)
+    if sliderObj and sliderObj.SliderFill then
+        local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        pcall(function()
+            TweenService:Create(sliderObj.SliderFill, tweenInfo, {Size = UDim2.new(fraction, 0, 1, 0)}):Play()
+        end)
+    end
+end
+
+-- TAB 1: Modifiers
+local ModifiersTab = Window:CreateTab("Modifiers", 4483362458)
+
+-- WalkSpeed Slider
+ModifiersTab:CreateSlider({
+    Name = "WalkSpeed",
+    Range = {16, 100},
+    Increment = 1,
+    CurrentValue = 16,
+    Flag = "WalkSpeed",
+    Callback = function(Value)
+        movementValues.WalkSpeed = Value
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function() hum.WalkSpeed = math.clamp(Value, 16, 100) end)
+        end
+        updateSliderFillSmooth(ModifiersTab.Flags["WalkSpeed"].Object, (Value - 16) / (100 - 16))
+    end
+})
+
+-- JumpHeight Slider
+ModifiersTab:CreateSlider({
+    Name = "Jump Height",
+    Range = {7, 50},
+    Increment = 1,
+    CurrentValue = 7,
+    Flag = "JumpHeight",
+    Callback = function(Value)
+        movementValues.JumpHeight = Value
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                hum.UseJumpPower = false
+                hum.JumpHeight = math.clamp(Value, 7, 50)
+            end)
+        end
+        updateSliderFillSmooth(ModifiersTab.Flags["JumpHeight"].Object, (Value - 7) / (50 - 7))
+    end
+})
+
+-- Flight
+local flying, flySpeed = false, 50
+local bodyVel
+local function startFlight()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    if bodyVel then pcall(function() bodyVel:Destroy() end) end
+    bodyVel = Instance.new("BodyVelocity")
+    bodyVel.MaxForce = Vector3.new(4e4, 4e4, 4e4)
+    bodyVel.Velocity = Vector3.zero
+    bodyVel.Parent = root
+    while flying and task.wait(math.random(0.01, 0.03)) do
+        local moveDir = Vector3.zero
+        local cam = workspace.CurrentCamera
+        if cam then
+            if UIS:IsKeyDown(Enum.KeyCode.W) then moveDir += cam.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.S) then moveDir -= cam.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.A) then moveDir -= cam.CFrame.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.D) then moveDir += cam.CFrame.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0, 1, 0) end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir -= Vector3.new(0, 1, 0) end
+        end
+        pcall(function()
+            bodyVel.Velocity = (moveDir.Magnitude > 0 and moveDir.Unit * math.clamp(flySpeed, 10, 100)) or Vector3.zero
+        end)
+    end
+    if bodyVel then pcall(function() bodyVel:Destroy() end) bodyVel = nil end
+end
+
+ModifiersTab:CreateToggle({
+    Name = "Flight",
+    CurrentValue = false,
+    Callback = function(Value)
+        flying = Value
+        prevToggles.Flight = Value
+        if flying then task.spawn(startFlight) end
+    end
+})
+
+ModifiersTab:CreateSlider({
+    Name = "Flight Speed",
+    Range = {10, 100},
+    Increment = 5,
+    CurrentValue = 50,
+    Callback = function(Value)
+        flySpeed = math.clamp(Value, 10, 100)
+        updateSliderFillSmooth(ModifiersTab.Flags["FlightSpeed"].Object, (Value - 10) / (100 - 10))
+    end
+})
+
+-- NoClip
+local noclip = false
+local noclipConn
+local noclipParts = {}
+local function enableNoClip()
+    local char = LocalPlayer.Character
+    if not char then return end
+    noclipParts = {}
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            table.insert(noclipParts, p)
+            pcall(function() p.CanCollide = false end)
+        end
+    end
+    if noclipConn then pcall(function() noclipConn:Disconnect() end) end
+    noclipConn = RunService.Heartbeat:Connect(function()
+        for _, p in pairs(noclipParts) do
+            if p and p.Parent then pcall(function() p.CanCollide = false end) end
+        end
+    end)
+end
+local function disableNoClip()
+    if noclipConn then pcall(function() noclipConn:Disconnect() end) noclipConn = nil end
+    for _, p in pairs(noclipParts) do
+        if p then pcall(function() p.CanCollide = true end) end
+    end
+    noclipParts = {}
+end
+ModifiersTab:CreateToggle({
+    Name = "NoClip",
+    CurrentValue = false,
+    Callback = function(Value)
+        noclip = Value
+        prevToggles.NoClip = Value
+        if noclip then enableNoClip() else disableNoClip() end
+    end
+})
+
+-- Infinite Jump
+local infiniteJumpEnabled = false
+local jumpBoost = 50
+ModifiersTab:CreateToggle({
+    Name = "Infinite Jump",
+    CurrentValue = false,
+    Callback = function(Value)
+        infiniteJumpEnabled = Value
+        prevToggles.InfiniteJump = Value
+    end
+})
+ModifiersTab:CreateSlider({
+    Name = "Infinite Jump Power",
+    Range = {20, 100},
+    Increment = 5,
+    CurrentValue = jumpBoost,
+    Callback = function(Value)
+        jumpBoost = math.clamp(Value, 20, 100)
+        updateSliderFillSmooth(ModifiersTab.Flags["InfiniteJumpPower"].Object, (Value - 20) / (100 - 20))
+    end
+})
+UIS.JumpRequest:Connect(function()
+    if infiniteJumpEnabled then
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.Velocity = Vector3.new(root.Velocity.X, math.clamp(jumpBoost, 20, 100), root.Velocity.Z)
+            end)
+        end
+    end
+end)
+
+-- TAB 2: ESP
+local ESPTab = Window:CreateTab("ESP", 4483362458)
+local espObjects = {}
+local hitboxESPEnabled, nameESPEnabled, healthESPEnabled, distanceESPEnabled = false, false, false, false
+
+local function createESP(player)
+    if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("Head") then return end
+    local char, head = player.Character, player.Character.Head
+    if not espObjects[player.Name] then
+        local highlight = Instance.new("Highlight")
+        highlight.FillTransparency = 1
+        highlight.OutlineTransparency = hitboxESPEnabled and 0 or 1
+        highlight.OutlineColor = Color3.new(0.8, 0.8, 0.8)
+        highlight.Parent = char
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Size = UDim2.new(0, 150, 0, 40)
+        billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Adornee = head
+        billboard.Parent = head
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Size = UDim2.new(1, 0, 0.25, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+        nameLabel.TextScaled = true
+        nameLabel.Visible = nameESPEnabled
+        nameLabel.Text = player.Name
+        nameLabel.Parent = billboard
+
+        local healthLabel = Instance.new("TextLabel")
+        healthLabel.Size = UDim2.new(1, 0, 0.25, 0)
+        healthLabel.Position = UDim2.new(0, 0, 0.25, 0)
+        healthLabel.BackgroundTransparency = 1
+        healthLabel.TextColor3 = Color3.new(0.8, 0, 0)
+        healthLabel.TextScaled = true
+        healthLabel.Visible = healthESPEnabled
+        healthLabel.Text = "HP:" .. (char:FindFirstChildOfClass("Humanoid") and math.floor(char:FindFirstChildOfClass("Humanoid").Health) or 0)
+        healthLabel.Parent = billboard
+
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Size = UDim2.new(1, 0, 0.25, 0)
+        distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.TextColor3 = Color3.new(0, 0.8, 0)
+        distanceLabel.TextScaled = true
+        distanceLabel.Visible = distanceESPEnabled
+        distanceLabel.Text = LocalPlayer.Character and "Dist:" .. math.floor((head.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude) or "Dist:N/A"
+        distanceLabel.Parent = billboard
+
+        espObjects[player.Name] = { Highlight = highlight, Name = nameLabel, Health = healthLabel, Distance = distanceLabel }
+    end
+end
+
+local lastESPUpdate = 0
+local function updateESP()
+    if tick() - lastESPUpdate < 0.1 then return end
+    lastESPUpdate = tick()
+    for _, player in pairs(Players:GetPlayers()) do
+        pcall(function()
+            createESP(player)
+            if espObjects[player.Name] and player.Character then
+                local data = espObjects[player.Name]
+                data.Highlight.OutlineTransparency = hitboxESPEnabled and 0 or 1
+                data.Name.Visible = nameESPEnabled
+                data.Health.Visible = healthESPEnabled
+                data.Distance.Visible = distanceESPEnabled
+                if healthESPEnabled and player.Character:FindFirstChildOfClass("Humanoid") then
+                    data.Health.Text = "HP:" .. math.floor(player.Character:FindFirstChildOfClass("Humanoid").Health)
+                end
+                if distanceESPEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local dist = (player.Character.Head.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+                    data.Distance.Text = "Dist:" .. math.floor(dist)
+                end
+            end
+        end)
+    end
+end
+
+ESPTab:CreateToggle({ Name = "Outline ESP", CurrentValue = false, Callback = function(Value) hitboxESPEnabled = Value prevToggles.HitboxESP = Value updateESP() end })
+ESPTab:CreateToggle({ Name = "Name ESP", CurrentValue = false, Callback = function(Value) nameESPEnabled = Value prevToggles.NameESP = Value updateESP() end })
+ESPTab:CreateToggle({ Name = "Health ESP", CurrentValue = false, Callback = function(Value) healthESPEnabled = Value prevToggles.HealthESP = Value updateESP() end })
+ESPTab:CreateToggle({ Name = "Distance ESP", CurrentValue = false, Callback = function(Value) distanceESPEnabled = Value prevToggles.DistanceESP = Value updateESP() end })
+
+local espConn
+if not espConn then
+    espConn = RunService.Heartbeat:Connect(updateESP)
+end
+
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function()
+        task.wait(math.random(0.5, 1.5))
+        if hitboxESPEnabled or nameESPEnabled or healthESPEnabled or distanceESPEnabled then
+            pcall(createESP, plr)
+        end
+    end)
+end)
+
+-- TAB 3: Spin & Godmode
+local SpinTab = Window:CreateTab("Spin & Godmode", 4483362458)
+local spinEnabled = false
+local spinSpeed = 60
+local godmodeEnabled = false
+
+-- Spin Toggle
+SpinTab:CreateToggle({
+    Name = "Spin",
+    CurrentValue = false,
+    Callback = function(Value)
+        spinEnabled = Value
+        prevToggles.Spin = Value
+    end
+})
+
+-- Spin Speed Slider
+SpinTab:CreateSlider({
+    Name = "Spin Speed",
+    Range = {10, 500},
+    Increment = 10,
+    CurrentValue = 60,
+    Callback = function(Value)
+        spinSpeed = math.clamp(Value, 10, 500)
+    end
+})
+
+-- Godmode Toggle
+SpinTab:CreateToggle({
+    Name = "Godmode",
+    CurrentValue = false,
+    Callback = function(Value)
+        godmodeEnabled = Value
+        prevToggles.Godmode = Value
+    end
+})
+
+-- Multi-Target Fling
+local function getPlayerList()
+    local playerList = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(playerList, player.Name)
+        end
+    end
+    table.sort(playerList)
+    return playerList
+end
+
+SpinTab:CreateDropdown({
+    Name = "Select Fling Targets",
+    Options = getPlayerList(),
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "SelectedFlingTargets",
+    Callback = function(Selected)
+        SelectedTargets = {}
+        for _, name in pairs(Selected) do
+            local player = Players:FindFirstChild(name)
+            if player then
+                SelectedTargets[name] = player
+            end
+        end
+        Rayfield:Notify({
+            Title = "Targets Updated",
+            Content = "Selected " .. #Selected .. " target(s) for flinging",
+            Duration = 2
+        })
+    end
+})
+
+SpinTab:CreateToggle({
+    Name = "Fling Targets",
+    CurrentValue = false,
+    Callback = function(Value)
+        FlingActive = Value
+        prevToggles.Fling = Value
+        if FlingActive then
+            if next(SelectedTargets) == nil then
+                FlingActive = false
+                prevToggles.Fling = false
+                SpinTab.Flags["FlingTargets"].Object:Set(false)
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "No targets selected!",
+                    Duration = 2
+                })
+                return
+            end
+            Rayfield:Notify({
+                Title = "Fling Started",
+                Content = "Flinging " .. #getPlayerList() .. " target(s)",
+                Duration = 2
+            })
+        else
+            Rayfield:Notify({
+                Title = "Fling Stopped",
+                Content = "Fling has been stopped",
+                Duration = 2
+            })
+        end
+    end
+})
+
+SpinTab:CreateSlider({
+    Name = "Fling Strength",
+    Range = {500, 5000},
+    Increment = 100,
+    CurrentValue = 2000,
+    Flag = "FlingStrength",
+    Callback = function(Value)
+        movementValues.FlingStrength = Value
+        updateSliderFillSmooth(SpinTab.Flags["FlingStrength"].Object, (Value - 500) / (5000 - 500))
+    end
+})
+
+-- Refresh player list when players join/leave
+Players.PlayerAdded:Connect(function()
+    task.wait(math.random(0.5, 1.5))
+    pcall(function()
+        SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
+    end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+    task.wait(math.random(0.5, 1.5))
+    pcall(function()
+        SelectedTargets[player.Name] = nil
+        SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
+    end)
+end)
+
+-- Fling Function (Adapted from SkidFling)
+local function SkidFling(TargetPlayer)
+    local Character = LocalPlayer.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    local TCharacter = TargetPlayer.Character
+    if not TCharacter then return end
+
+    local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    local TRootPart = THumanoid and THumanoid.RootPart
+    local THead = TCharacter:FindFirstChild("Head")
+    local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
+    local Handle = Accessory and Accessory:FindFirstChild("Handle")
+
+    if not (Character and Humanoid and RootPart) then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = "Your character is not ready",
+            Duration = 2
+        })
+        return
+    end
+
+    if not (THumanoid and TRootPart) then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = TargetPlayer.Name .. " has no valid parts",
+            Duration = 2
+        })
+        return
+    end
+
+    if THumanoid.Sit then
+        Rayfield:Notify({
+            Title = "Error",
+            Content = TargetPlayer.Name .. " is sitting",
+            Duration = 2
+        })
+        return
+    end
+
+    pcall(function()
+        if RootPart.Velocity.Magnitude < 50 then
+            getgenv().OldPos = RootPart.CFrame
+        end
+
+        -- Set camera to target
+        if THead then
+            workspace.CurrentCamera.CameraSubject = THead
+        elseif Handle then
+            workspace.CurrentCamera.CameraSubject = Handle
+        else
+            workspace.CurrentCamera.CameraSubject = THumanoid
+        end
+
+        -- Teleport to target's exact position
+        RootPart.CFrame = TRootPart.CFrame
+        Character:SetPrimaryPartCFrame(TRootPart.CFrame)
+
+        local BV = Instance.new("BodyVelocity")
+        BV.Parent = RootPart
+        BV.Velocity = Vector3.new(0, 0, 0)
+        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        workspace.FallenPartsDestroyHeight = 0/0
+
+        -- Fling logic with strength scaling
+        local function FPos(BasePart, Pos, Ang)
+            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7) * (movementValues.FlingStrength / 2000)
+            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8) * (movementValues.FlingStrength / 2000)
+        end
+
+        local function SFBasePart(BasePart)
+            local TimeToWait = 2
+            local Time = tick()
+            local Angle = 0
+            repeat
+                if RootPart and THumanoid and BasePart.Velocity.Magnitude < 50 then
+                    Angle = Angle + 100
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                else
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                end
+            until Time + TimeToWait < tick() or not FlingActive
+        end
+
+        if TRootPart then
+            SFBasePart(TRootPart)
+        elseif THead then
+            SFBasePart(THead)
+        elseif Handle then
+            SFBasePart(Handle)
+        end
+
+        BV:Destroy()
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        workspace.CurrentCamera.CameraSubject = Humanoid
+
+        -- Reset position
+        if getgenv().OldPos then
+            repeat
+                RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
+                Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, .5, 0))
+                Humanoid:ChangeState("GettingUp")
+                for _, part in pairs(Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                    end
+                end
+                task.wait()
+            until (RootPart.Position - getgenv().OldPos.p).Magnitude < 25
+            workspace.FallenPartsDestroyHeight = getgenv().FPDH
+        end
+    end)
+end
+
+-- Fling Loop
+local lastFlingUpdate = 0
+local flingCooldown = 0.5
+local function applyFling()
+    if not FlingActive then return end
+    if tick() - lastFlingUpdate < flingCooldown then return end
+    lastFlingUpdate = tick()
+
+    local validTargets = {}
+    for name, player in pairs(SelectedTargets) do
+        if player and player.Parent and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            validTargets[name] = player
+        else
+            SelectedTargets[name] = nil
+            SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
+        end
+    end
+
+    for _, player in pairs(validTargets) do
+        pcall(function()
+            SkidFling(player)
+            task.wait(0.1)
+        end)
+    end
+end
+
+-- Spin, Godmode, and Fling Update Loop
+local lastSpinGodmodeUpdate = 0
+RunService.Heartbeat:Connect(function(dt)
+    if tick() - lastSpinGodmodeUpdate < 0.05 then return end
+    lastSpinGodmodeUpdate = tick()
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        local root = char.HumanoidRootPart
+        if spinEnabled then
+            pcall(function()
+                root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(spinSpeed * dt * math.random(0.9, 1.1)), 0)
+            end)
+        end
+        if godmodeEnabled then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health < hum.MaxHealth then
+                pcall(function()
+                    hum.Health = math.min(hum.Health + (hum.MaxHealth * 0.1), hum.MaxHealth)
+                end)
+            end
+        end
+        if FlingActive then
+            applyFling()
+        end
+    end
+end)
+
+-- AUTO RETOGGLE ON DEATH
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(math.random(0.5, 1.5))
+    pcall(function()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = math.clamp(movementValues.WalkSpeed, 16, 100)
+            hum.UseJumpPower = false
+            hum.JumpHeight = math.clamp(movementValues.JumpHeight, 7, 50)
+        end
+        if prevToggles.Flight then
+            flying = true
+            task.spawn(startFlight)
+        end
+        if prevToggles.NoClip then
+            enableNoClip()
+        end
+        infiniteJumpEnabled = prevToggles.InfiniteJump
+        spinEnabled = prevToggles.Spin
+        godmodeEnabled = prevToggles.Godmode
+        if prevToggles.Fling then
+            FlingActive = true
+            SpinTab.Flags["FlingTargets"].Object:Set(true)
+        end
+        hitboxESPEnabled = prevToggles.HitboxESP
+        nameESPEnabled = prevToggles.NameESP
+        healthESPEnabled = prevToggles.HealthESP
+        distanceESPEnabled = prevToggles.DistanceESP
+    end)
+end)
+
+-- Cleanup on script termination
+game:BindToClose(function()
+    pcall(function()
+        if espConn then espConn:Disconnect() end
+        disableNoClip()
+        for _, data in pairs(espObjects) do
+            if data.Highlight then data.Highlight:Destroy() end
+            if data.Name then data.Name:Destroy() end
+            if data.Health then data.Health:Destroy() end
+            if data.Distance then data.Distance:Destroy() end
+        end
+        if bodyVel then bodyVel:Destroy() end
+        FlingActive = false
+        workspace.FallenPartsDestroyHeight = getgenv().FPDH
+    end)
+end)
