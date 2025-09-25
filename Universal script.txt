@@ -1,22 +1,33 @@
+-- Full main script (Rayfield + Modifiers, ESP, Spin + Kamikaze Fling)
+-- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 local LocalPlayer = Players.LocalPlayer
 
--- Securely load Rayfield with error handling
+-- Try multiple Rayfield loader URLs so GUI is more robust
+local rayfieldSources = {
+    "https://sirius.menu/rayfield",                                 -- your original
+    "https://raw.githubusercontent.com/shlexware/Rayfield/main/source" -- fallback
+}
 local Rayfield
-local success, result = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield', true))()
-end)
-if success then
-    Rayfield = result
-else
-    warn("Failed to load Rayfield: " .. tostring(result))
-    return -- Exit if Rayfield fails to load
+for _, url in ipairs(rayfieldSources) do
+    local ok, res = pcall(function()
+        return loadstring(game:HttpGet(url, true))()
+    end)
+    if ok and res then
+        Rayfield = res
+        break
+    end
+end
+if not Rayfield then
+    warn("Failed to load Rayfield from known sources.")
+    return
 end
 
--- Create Window with safe configuration
+-- Create Window
 local Window = Rayfield:CreateWindow({
     Name = "Mod Menu",
     LoadingTitle = "Mod Menu",
@@ -28,84 +39,70 @@ local Window = Rayfield:CreateWindow({
     }
 })
 
--- Track toggles and movement values
-local prevToggles = {
-    Flight = false,
-    NoClip = false,
-    Spin = false,
-    Godmode = false,
-    Fling = false,
-    HitboxESP = false,
-    NameESP = false,
-    HealthESP = false,
-    DistanceESP = false,
-    InfiniteJump = false
-}
-
-local movementValues = { WalkSpeed = 16, JumpHeight = 7, FlingStrength = 2000 }
-
--- Helper for slider animations
+-- helper: smooth slider fill tween (defensive)
 local function updateSliderFillSmooth(sliderObj, fraction)
-    if sliderObj and sliderObj.SliderFill then
-        local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        pcall(function()
-            TweenService:Create(sliderObj.SliderFill, tweenInfo, {Size = UDim2.new(fraction, 0, 1, 0)}):Play()
-        end)
-    end
+    if not sliderObj then return end
+    pcall(function()
+        if sliderObj.SliderFill then
+            local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            TweenService:Create(sliderObj.SliderFill, tweenInfo, {Size = UDim2.new(math.clamp(fraction, 0, 1), 0, 1, 0)}):Play()
+        end
+    end)
 end
 
+-- state
+local prevToggles = {
+    Flight=false, NoClip=false, Spin=false, Godmode=false, Fling=false,
+    HitboxESP=false, NameESP=false, HealthESP=false, DistanceESP=false, InfiniteJump=false
+}
+local movementValues = {WalkSpeed=16, JumpHeight=7, FlingStrength=1e9}
+
+-------------------------
 -- TAB 1: Modifiers
+-------------------------
 local ModifiersTab = Window:CreateTab("Modifiers", 4483362458)
 
--- WalkSpeed Slider
 ModifiersTab:CreateSlider({
-    Name = "WalkSpeed",
-    Range = {16, 100},
-    Increment = 1,
-    CurrentValue = 16,
-    Flag = "WalkSpeed",
-    Callback = function(Value)
+    Name="WalkSpeed", Range={16,100}, Increment=1, CurrentValue=movementValues.WalkSpeed,
+    Flag="WalkSpeed",
+    Callback=function(Value)
         movementValues.WalkSpeed = Value
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then
-            pcall(function() hum.WalkSpeed = math.clamp(Value, 16, 100) end)
-        end
-        updateSliderFillSmooth(ModifiersTab.Flags["WalkSpeed"].Object, (Value - 16) / (100 - 16))
+        if hum then pcall(function() hum.WalkSpeed = math.clamp(Value,16,100) end) end
+        local sliderObj = ModifiersTab.Flags and ModifiersTab.Flags["WalkSpeed"] and ModifiersTab.Flags["WalkSpeed"].Object
+        updateSliderFillSmooth(sliderObj, (Value-16)/(100-16))
     end
 })
 
--- JumpHeight Slider
 ModifiersTab:CreateSlider({
-    Name = "Jump Height",
-    Range = {7, 50},
-    Increment = 1,
-    CurrentValue = 7,
-    Flag = "JumpHeight",
-    Callback = function(Value)
+    Name="Jump Height", Range={7,50}, Increment=1, CurrentValue=movementValues.JumpHeight,
+    Flag="JumpHeight",
+    Callback=function(Value)
         movementValues.JumpHeight = Value
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         if hum then
             pcall(function()
                 hum.UseJumpPower = false
-                hum.JumpHeight = math.clamp(Value, 7, 50)
+                hum.JumpHeight = math.clamp(Value,7,50)
             end)
         end
-        updateSliderFillSmooth(ModifiersTab.Flags["JumpHeight"].Object, (Value - 7) / (50 - 7))
+        local sliderObj = ModifiersTab.Flags and ModifiersTab.Flags["JumpHeight"] and ModifiersTab.Flags["JumpHeight"].Object
+        updateSliderFillSmooth(sliderObj, (Value-7)/(50-7))
     end
 })
 
 -- Flight
 local flying, flySpeed = false, 50
-local bodyVel
+local bodyVel = nil
 local function startFlight()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
     if bodyVel then pcall(function() bodyVel:Destroy() end) end
     bodyVel = Instance.new("BodyVelocity")
-    bodyVel.MaxForce = Vector3.new(4e4, 4e4, 4e4)
+    bodyVel.MaxForce = Vector3.new(4e4,4e4,4e4)
     bodyVel.Velocity = Vector3.zero
     bodyVel.Parent = root
-    while flying and task.wait(math.random(0.01, 0.03)) do
+    while flying and task.wait(0.02) do
         local moveDir = Vector3.zero
         local cam = workspace.CurrentCamera
         if cam then
@@ -113,39 +110,25 @@ local function startFlight()
             if UIS:IsKeyDown(Enum.KeyCode.S) then moveDir -= cam.CFrame.LookVector end
             if UIS:IsKeyDown(Enum.KeyCode.A) then moveDir -= cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.D) then moveDir += cam.CFrame.RightVector end
-            if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0, 1, 0) end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir -= Vector3.new(0, 1, 0) end
+            if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0,1,0) end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir -= Vector3.new(0,1,0) end
         end
-        pcall(function()
-            bodyVel.Velocity = (moveDir.Magnitude > 0 and moveDir.Unit * math.clamp(flySpeed, 10, 100)) or Vector3.zero
-        end)
+        pcall(function() bodyVel.Velocity = (moveDir.Magnitude>0 and moveDir.Unit*math.clamp(flySpeed,10,100)) or Vector3.zero end)
     end
-    if bodyVel then pcall(function() bodyVel:Destroy() end) bodyVel = nil end
+    if bodyVel then pcall(function() bodyVel:Destroy() end) bodyVel=nil end
 end
 
 ModifiersTab:CreateToggle({
-    Name = "Flight",
-    CurrentValue = false,
-    Callback = function(Value)
-        flying = Value
-        prevToggles.Flight = Value
-        if flying then task.spawn(startFlight) end
-    end
+    Name="Flight", CurrentValue=false,
+    Callback=function(Value) flying = Value prevToggles.Flight = Value if flying then task.spawn(startFlight) end end
 })
-
 ModifiersTab:CreateSlider({
-    Name = "Flight Speed",
-    Range = {10, 100},
-    Increment = 5,
-    CurrentValue = 50,
-    Callback = function(Value)
-        flySpeed = math.clamp(Value, 10, 100)
-        updateSliderFillSmooth(ModifiersTab.Flags["FlightSpeed"].Object, (Value - 10) / (100 - 10))
-    end
+    Name="Flight Speed", Range={10,100}, Increment=5, CurrentValue=flySpeed,
+    Callback=function(Value) flySpeed = math.clamp(Value,10,100) local sliderObj = ModifiersTab.Flags and ModifiersTab.Flags["FlightSpeed"] and ModifiersTab.Flags["FlightSpeed"].Object updateSliderFillSmooth(sliderObj, (Value-10)/(100-10)) end
 })
 
 -- NoClip
-local noclip = false
+local noclip=false
 local noclipConn
 local noclipParts = {}
 local function enableNoClip()
@@ -167,57 +150,35 @@ local function enableNoClip()
 end
 local function disableNoClip()
     if noclipConn then pcall(function() noclipConn:Disconnect() end) noclipConn = nil end
-    for _, p in pairs(noclipParts) do
-        if p then pcall(function() p.CanCollide = true end) end
-    end
+    for _, p in pairs(noclipParts) do if p then pcall(function() p.CanCollide = true end) end end
     noclipParts = {}
 end
 ModifiersTab:CreateToggle({
-    Name = "NoClip",
-    CurrentValue = false,
-    Callback = function(Value)
-        noclip = Value
-        prevToggles.NoClip = Value
-        if noclip then enableNoClip() else disableNoClip() end
-    end
+    Name="NoClip", CurrentValue=false,
+    Callback=function(Value) noclip = Value prevToggles.NoClip = Value if noclip then enableNoClip() else disableNoClip() end end
 })
 
 -- Infinite Jump
 local infiniteJumpEnabled = false
 local jumpBoost = 50
-ModifiersTab:CreateToggle({
-    Name = "Infinite Jump",
-    CurrentValue = false,
-    Callback = function(Value)
-        infiniteJumpEnabled = Value
-        prevToggles.InfiniteJump = Value
-    end
-})
+ModifiersTab:CreateToggle({Name="Infinite Jump", CurrentValue=false, Callback=function(Value) infiniteJumpEnabled = Value prevToggles.InfiniteJump = Value end})
 ModifiersTab:CreateSlider({
-    Name = "Infinite Jump Power",
-    Range = {20, 100},
-    Increment = 5,
-    CurrentValue = jumpBoost,
-    Callback = function(Value)
-        jumpBoost = math.clamp(Value, 20, 100)
-        updateSliderFillSmooth(ModifiersTab.Flags["InfiniteJumpPower"].Object, (Value - 20) / (100 - 20))
-    end
+    Name="Infinite Jump Power", Range={20,100}, Increment=5, CurrentValue=jumpBoost,
+    Callback=function(Value) jumpBoost = math.clamp(Value,20,100) local sliderObj = ModifiersTab.Flags and ModifiersTab.Flags["InfiniteJumpPower"] and ModifiersTab.Flags["InfiniteJumpPower"].Object updateSliderFillSmooth(sliderObj, (Value-20)/(100-20)) end
 })
 UIS.JumpRequest:Connect(function()
     if infiniteJumpEnabled then
         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function()
-                root.Velocity = Vector3.new(root.Velocity.X, math.clamp(jumpBoost, 20, 100), root.Velocity.Z)
-            end)
-        end
+        if root then pcall(function() root.Velocity = Vector3.new(root.Velocity.X, jumpBoost, root.Velocity.Z) end) end
     end
 end)
 
+-------------------------
 -- TAB 2: ESP
+-------------------------
 local ESPTab = Window:CreateTab("ESP", 4483362458)
 local espObjects = {}
-local hitboxESPEnabled, nameESPEnabled, healthESPEnabled, distanceESPEnabled = false, false, false, false
+local hitboxESPEnabled, nameESPEnabled, healthESPEnabled, distanceESPEnabled = false,false,false,false
 
 local function createESP(player)
     if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("Head") then return end
@@ -230,49 +191,46 @@ local function createESP(player)
         highlight.Parent = char
 
         local billboard = Instance.new("BillboardGui")
-        billboard.Size = UDim2.new(0, 200, 0, 60) -- Increased size for larger text
-        billboard.StudsOffset = Vector3.new(0, 3, 0) -- Adjusted offset for larger GUI
+        billboard.Size = UDim2.new(0,200,0,60)
+        billboard.StudsOffset = Vector3.new(0,3,0)
         billboard.AlwaysOnTop = true
         billboard.Adornee = head
         billboard.Parent = head
 
         local nameLabel = Instance.new("TextLabel")
-        nameLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
+        nameLabel.Size = UDim2.new(1,0,0.33,0)
         nameLabel.BackgroundTransparency = 1
-        nameLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+        nameLabel.TextColor3 = Color3.new(0.8,0.8,0.8)
         nameLabel.TextScaled = true
         nameLabel.Visible = nameESPEnabled
         nameLabel.Text = player.Name
         nameLabel.Parent = billboard
 
         local healthLabel = Instance.new("TextLabel")
-        healthLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
-        healthLabel.Position = UDim2.new(0, 0, 0.33, 0) -- Adjusted position
+        healthLabel.Size = UDim2.new(1,0,0.33,0)
+        healthLabel.Position = UDim2.new(0,0,0.33,0)
         healthLabel.BackgroundTransparency = 1
-        healthLabel.TextColor3 = Color3.new(0.8, 0, 0)
+        healthLabel.TextColor3 = Color3.new(0.8,0,0)
         healthLabel.TextScaled = true
         healthLabel.Visible = healthESPEnabled
         healthLabel.Text = "HP:" .. (char:FindFirstChildOfClass("Humanoid") and math.floor(char:FindFirstChildOfClass("Humanoid").Health) or 0)
         healthLabel.Parent = billboard
 
         local distanceLabel = Instance.new("TextLabel")
-        distanceLabel.Size = UDim2.new(1, 0, 0.33, 0) -- Increased height for larger text
-        distanceLabel.Position = UDim2.new(0, 0, 0.66, 0) -- Adjusted position
+        distanceLabel.Size = UDim2.new(1,0,0.33,0)
+        distanceLabel.Position = UDim2.new(0,0,0.66,0)
         distanceLabel.BackgroundTransparency = 1
-        distanceLabel.TextColor3 = Color3.new(0, 0.8, 0)
+        distanceLabel.TextColor3 = Color3.new(0,0.8,0)
         distanceLabel.TextScaled = true
         distanceLabel.Visible = distanceESPEnabled
         distanceLabel.Text = LocalPlayer.Character and "Dist:" .. math.floor((head.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude) or "Dist:N/A"
         distanceLabel.Parent = billboard
 
-        espObjects[player.Name] = { Highlight = highlight, Name = nameLabel, Health = healthLabel, Distance = distanceLabel }
+        espObjects[player.Name] = {Highlight = highlight, Name = nameLabel, Health = healthLabel, Distance = distanceLabel}
     end
 end
 
-local lastESPUpdate = 0
 local function updateESP()
-    if tick() - lastESPUpdate < 0.1 then return end
-    lastESPUpdate = tick()
     for _, player in pairs(Players:GetPlayers()) do
         pcall(function()
             createESP(player)
@@ -294,419 +252,232 @@ local function updateESP()
     end
 end
 
-ESPTab:CreateToggle({ Name = "Outline ESP", CurrentValue = false, Callback = function(Value) hitboxESPEnabled = Value prevToggles.HitboxESP = Value updateESP() end })
-ESPTab:CreateToggle({ Name = "Name ESP", CurrentValue = false, Callback = function(Value) nameESPEnabled = Value prevToggles.NameESP = Value updateESP() end })
-ESPTab:CreateToggle({ Name = "Health ESP", CurrentValue = false, Callback = function(Value) healthESPEnabled = Value prevToggles.HealthESP = Value updateESP() end })
-ESPTab:CreateToggle({ Name = "Distance ESP", CurrentValue = false, Callback = function(Value) distanceESPEnabled = Value prevToggles.DistanceESP = Value updateESP() end })
+ESPTab:CreateToggle({Name="Outline ESP", CurrentValue=false, Callback=function(Value) hitboxESPEnabled=Value prevToggles.HitboxESP=Value updateESP() end})
+ESPTab:CreateToggle({Name="Name ESP", CurrentValue=false, Callback=function(Value) nameESPEnabled=Value prevToggles.NameESP=Value updateESP() end})
+ESPTab:CreateToggle({Name="Health ESP", CurrentValue=false, Callback=function(Value) healthESPEnabled=Value prevToggles.HealthESP=Value updateESP() end})
+ESPTab:CreateToggle({Name="Distance ESP", CurrentValue=false, Callback=function(Value) distanceESPEnabled=Value prevToggles.DistanceESP=Value updateESP() end})
 
-local espConn
-if not espConn then
-    espConn = RunService.Heartbeat:Connect(updateESP)
-end
+RunService.Heartbeat:Connect(updateESP)
+Players.PlayerAdded:Connect(function(plr) plr.CharacterAdded:Connect(function() task.wait(1) updateESP() end) end)
+Players.PlayerRemoving:Connect(function(player) espObjects[player.Name] = nil end)
 
-Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function()
-        task.wait(math.random(0.5, 1.5))
-        if hitboxESPEnabled or nameESPEnabled or healthESPEnabled or distanceESPEnabled then
-            pcall(createESP, plr)
-        end
-    end)
-end)
+-------------------------
+-- TAB 3: Spin & Kamikaze Fling (Fling dropdown DOES NOT SAVE)
+-------------------------
+local SpinTab = Window:CreateTab("Spin & Fling", 4483362458)
 
--- TAB 3: Spin & Godmode
-local SpinTab = Window:CreateTab("Spin & Godmode", 4483362458)
 local spinEnabled = false
-local spinSpeed = 60
+local spinSpeed = 6000
 local godmodeEnabled = false
-local flingEnabled = false
+local FlingActive = false
 local SelectedTargets = {}
-getgenv().OldPos = nil
-getgenv().FPDH = workspace.FallenPartsDestroyHeight
+local flingLoop = nil
 
--- Spin Toggle
-SpinTab:CreateToggle({
-    Name = "Spin",
-    CurrentValue = false,
-    Callback = function(Value)
-        spinEnabled = Value
-        prevToggles.Spin = Value
-    end
-})
-
--- Spin Speed Slider
+-- Spin toggle + slider
+SpinTab:CreateToggle({Name="Spin", CurrentValue=false, Callback=function(Value) spinEnabled=Value prevToggles.Spin=Value end})
 SpinTab:CreateSlider({
-    Name = "Spin Speed",
-    Range = {10, 500},
-    Increment = 10,
-    CurrentValue = 60,
-    Callback = function(Value)
-        spinSpeed = math.clamp(Value, 10, 500)
+    Name="Spin Speed", Range={1000,12000}, Increment=500, CurrentValue=spinSpeed, Flag="SpinSpeed",
+    Callback=function(Value)
+        spinSpeed = Value
+        local sliderObj = SpinTab.Flags and SpinTab.Flags["SpinSpeed"] and SpinTab.Flags["SpinSpeed"].Object
+        updateSliderFillSmooth(sliderObj, (Value-1000)/(12000-1000))
     end
 })
 
--- Godmode Toggle
+-- Godmode
 SpinTab:CreateToggle({
-    Name = "Godmode",
-    CurrentValue = false,
-    Callback = function(Value)
+    Name="Godmode", CurrentValue=false,
+    Callback=function(Value)
         godmodeEnabled = Value
         prevToggles.Godmode = Value
-    end
-})
-
--- Load Universal Script Button
-SpinTab:CreateButton({
-    Name = "Load Universal Script",
-    Callback = function()
-        pcall(function()
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/Executioner11/Universal-Script/main/Universal%20script.txt"))()
-            Rayfield:Notify({
-                Title = "Success",
-                Content = "Universal Script loaded!",
-                Duration = 3
-            })
-        end, function(err)
-            Rayfield:Notify({
-                Title = "Error",
-                Content = "Failed to load Universal Script: " .. tostring(err),
-                Duration = 3
-            })
-        end)
-    end
-})
-
--- Fling Targets Dropdown
-local function getPlayerList()
-    local playerList = {}
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            table.insert(playerList, player.Name)
-        end
-    end
-    table.sort(playerList)
-    return playerList
-end
-
-SpinTab:CreateDropdown({
-    Name = "Select Fling Targets",
-    Options = getPlayerList(),
-    CurrentOption = {},
-    MultipleOptions = true,
-    Flag = "SelectedFlingTargets",
-    Callback = function(Selected)
-        SelectedTargets = {}
-        for _, name in pairs(Selected) do
-            local player = Players:FindFirstChild(name)
-            if player then
-                SelectedTargets[name] = player
+        if godmodeEnabled then
+            local char = LocalPlayer.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.MaxHealth = math.huge
+                    hum.Health = hum.MaxHealth
+                    -- keep health topped off
+                    hum.HealthChanged:Connect(function()
+                        if hum and hum.Health < hum.MaxHealth then
+                            pcall(function() hum.Health = hum.MaxHealth end)
+                        end
+                    end)
+                end
             end
         end
-        Rayfield:Notify({
-            Title = "Targets Updated",
-            Content = "Selected " .. #Selected .. " target(s)",
-            Duration = 2
-        })
     end
 })
 
--- Fling Toggle
+-- Dropdown helper (no Flag so Rayfield won't persist this selection)
+local function getPlayerList()
+    local list = {}
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then table.insert(list, plr.Name) end
+    end
+    table.sort(list)
+    return list
+end
+
+local flingDropdown
+-- create dropdown (CurrentOption={} so nothing starts selected)
+do
+    local ok, obj = pcall(function()
+        return SpinTab:CreateDropdown({
+            Name = "Select Fling Targets",
+            Options = getPlayerList(),
+            CurrentOption = {},
+            MultipleOptions = true,
+            -- no Flag -> Rayfield won't save
+            Callback = function(selected)
+                SelectedTargets = {}
+                for _, name in pairs(selected) do
+                    local plr = Players:FindFirstChild(name)
+                    if plr then table.insert(SelectedTargets, plr) end
+                end
+            end
+        })
+    end)
+    if ok then flingDropdown = obj end
+end
+
+-- safe dropdown refresh function
+local function refreshDropdown()
+    local options = getPlayerList()
+    pcall(function()
+        if flingDropdown and type(flingDropdown.Refresh) == "function" then
+            flingDropdown:Refresh(options)
+        elseif flingDropdown and flingDropdown.Options ~= nil then
+            -- try set field if available
+            flingDropdown.Options = options
+        end
+    end)
+end
+
+-- remove departed players from SelectedTargets so no stale references
+Players.PlayerRemoving:Connect(function(plr)
+    -- remove from SelectedTargets array
+    for i = #SelectedTargets, 1, -1 do
+        if SelectedTargets[i] == plr then table.remove(SelectedTargets, i) end
+    end
+    -- refresh dropdown options
+    refreshDropdown()
+end)
+
+Players.PlayerAdded:Connect(function()
+    -- small delay then refresh
+    task.wait(0.2)
+    refreshDropdown()
+end)
+
+-- Kamikaze fling implementation (defensive)
+local function KamikazeFling(target)
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    local hrp = Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        local hum = Character:FindFirstChildOfClass("Humanoid")
+        hrp = hum and hum.RootPart or nil
+    end
+    local TChar = target and target.Character
+    local TRoot = TChar and TChar:FindFirstChild("HumanoidRootPart")
+    if not (hrp and TRoot) then return end
+
+    pcall(function()
+        -- teleport slightly inside/above target to trigger fling behavior
+        hrp.CFrame = TRoot.CFrame + Vector3.new(0, 0.5, 0)
+
+        -- push outward with BodyVelocity
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        local direction = (hrp.Position - TRoot.Position)
+        if direction.Magnitude <= 0 then direction = Vector3.new(0,1,0) end
+        bv.Velocity = direction.Unit * (movementValues.FlingStrength or 1e9)
+        bv.P = 1e5
+        bv.Parent = hrp
+        Debris:AddItem(bv, 0.12)
+    end)
+end
+
+-- helper to count selected targets
+local function CountSelectedTargets()
+    local count = 0
+    for _, v in ipairs(SelectedTargets) do
+        if v and v.Parent then count = count + 1 end
+    end
+    return count
+end
+
+-- Fling toggle (Kamikaze behavior) — replaces old fling
 SpinTab:CreateToggle({
-    Name = "Fling Targets",
+    Name = "Fling",
     CurrentValue = false,
     Callback = function(Value)
-        flingEnabled = Value
+        FlingActive = Value
         prevToggles.Fling = Value
-        if flingEnabled then
-            if next(SelectedTargets) == nil then
-                flingEnabled = false
-                prevToggles.Fling = false
-                SpinTab.Flags["FlingTargets"].Object:Set(false)
-                Rayfield:Notify({
-                    Title = "Error",
-                    Content = "No targets selected!",
-                    Duration = 2
-                })
+
+        if FlingActive then
+            if CountSelectedTargets() == 0 then
+                FlingActive = false
+                Rayfield:Notify({Title = "Error", Content = "No targets selected!", Duration = 2})
+                -- try to uncheck toggle UI safely (some Rayfield versions expose Flags)
+                pcall(function() if SpinTab.Flags and SpinTab.Flags["Fling"] and SpinTab.Flags["Fling"].Object then SpinTab.Flags["Fling"].Object:Set(false) end end)
                 return
             end
-            Rayfield:Notify({
-                Title = "Fling Started",
-                Content = "Flinging " .. #Selected .. " target(s)",
-                Duration = 2
-            })
-        else
-            Rayfield:Notify({
-                Title = "Fling Stopped",
-                Content = "Fling has been stopped",
-                Duration = 2
-            })
-        end
-    end
-})
 
--- Fling Strength Slider
-SpinTab:CreateSlider({
-    Name = "Fling Strength",
-    Range = {500, 5000},
-    Increment = 100,
-    CurrentValue = 2000,
-    Flag = "FlingStrength",
-    Callback = function(Value)
-        movementValues.FlingStrength = Value
-        updateSliderFillSmooth(SpinTab.Flags["FlingStrength"].Object, (Value - 500) / (5000 - 500))
-    end
-})
+            Rayfield:Notify({Title="Fling Started", Content="Kamikaze flinging "..CountSelectedTargets().." target(s)", Duration=2})
 
--- Handle player join/leave for dropdown
-Players.PlayerAdded:Connect(function()
-    task.wait(math.random(0.5, 1.5))
-    pcall(function()
-        SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
-    end)
-end)
-Players.PlayerRemoving:Connect(function(player)
-    task.wait(math.random(0.5, 1.5))
-    pcall(function()
-        SelectedTargets[player.Name] = nil
-        SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
-    end)
-end)
-
--- Fling Function (SkidFling)
-local function SkidFling(TargetPlayer)
-    local Character = LocalPlayer.Character
-    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-    local RootPart = Humanoid and Humanoid.RootPart
-    local TCharacter = TargetPlayer.Character
-    if not TCharacter then return end
-
-    local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
-    local TRootPart = THumanoid and THumanoid.RootPart
-    local THead = TCharacter:FindFirstChild("Head")
-    local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
-    local Handle = Accessory and Accessory:FindFirstChild("Handle")
-
-    if not (Character and Humanoid and RootPart) then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = "Your character is not ready",
-            Duration = 2
-        })
-        return
-    end
-
-    if not (THumanoid and TRootPart) then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = TargetPlayer.Name .. " has no valid parts",
-            Duration = 2
-        })
-        return
-    end
-
-    if THumanoid.Sit then
-        Rayfield:Notify({
-            Title = "Error",
-            Content = TargetPlayer.Name .. " is sitting",
-            Duration = 2
-        })
-        return
-    end
-
-    pcall(function()
-        if RootPart.Velocity.Magnitude < 50 then
-            getgenv().OldPos = RootPart.CFrame
-        end
-
-        -- Set camera to target
-        if THead then
-            workspace.CurrentCamera.CameraSubject = THead
-        elseif Handle then
-            workspace.CurrentCamera.CameraSubject = Handle
-        else
-            workspace.CurrentCamera.CameraSubject = THumanoid
-        end
-
-        -- Teleport to target's exact position
-        RootPart.CFrame = TRootPart.CFrame
-        Character:SetPrimaryPartCFrame(TRootPart.CFrame)
-
-        local BV = Instance.new("BodyVelocity")
-        BV.Parent = RootPart
-        BV.Velocity = Vector3.new(0, 0, 0)
-        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-
-        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-        workspace.FallenPartsDestroyHeight = 0/0
-
-        -- Fling logic with strength scaling
-        local function FPos(BasePart, Pos, Ang)
-            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
-            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
-            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7) * (movementValues.FlingStrength / 2000)
-            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8) * (movementValues.FlingStrength / 2000)
-        end
-
-        local function SFBasePart(BasePart)
-            local TimeToWait = 2
-            local Time = tick()
-            local Angle = 0
-            repeat
-                if RootPart and THumanoid and BasePart.Velocity.Magnitude < 50 then
-                    Angle = Angle + 100
-                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
-                    task.wait()
-                else
-                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
-                    task.wait()
-                    FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                    task.wait()
+            flingLoop = RunService.Heartbeat:Connect(function(delta)
+                local char = LocalPlayer.Character
+                if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                -- spin while flinging (if enabled)
+                if spinEnabled and hrp then
+                    hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinSpeed * delta), 0)
                 end
-            until Time + TimeToWait < tick() or not flingEnabled
-        end
 
-        if TRootPart then
-            SFBasePart(TRootPart)
-        elseif THead then
-            SFBasePart(THead)
-        elseif Handle then
-            SFBasePart(Handle)
-        end
-
-        BV:Destroy()
-        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-        workspace.CurrentCamera.CameraSubject = Humanoid
-
-        -- Reset position
-        if getgenv().OldPos then
-            repeat
-                RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
-                Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, .5, 0))
-                Humanoid:ChangeState("GettingUp")
-                for _, part in pairs(Character:GetChildren()) do
-                    if part:IsA("BasePart") then
-                        part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                -- attempt to Kamikaze each target
+                for i = #SelectedTargets, 1, -1 do
+                    local target = SelectedTargets[i]
+                    if target and target.Parent and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                        KamikazeFling(target)
+                        task.wait(0.06) -- tiny pause to let physics act
+                    else
+                        -- remove invalid targets
+                        table.remove(SelectedTargets, i)
                     end
                 end
-                task.wait()
-            until (RootPart.Position - getgenv().OldPos.p).Magnitude < 25
-            workspace.FallenPartsDestroyHeight = getgenv().FPDH
-        end
-    end)
-end
 
--- Fling Loop
-local lastFlingUpdate = 0
-local flingCooldown = 0.5
-local function applyFling()
-    if not flingEnabled then return end
-    if tick() - lastFlingUpdate < flingCooldown then return end
-    lastFlingUpdate = tick()
-
-    local validTargets = {}
-    for name, player in pairs(SelectedTargets) do
-        if player and player.Parent and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            validTargets[name] = player
-        else
-            SelectedTargets[name] = nil
-            SpinTab.Flags["SelectedFlingTargets"].Object:UpdateOptions(getPlayerList())
-        end
-    end
-
-    for _, player in pairs(validTargets) do
-        pcall(function()
-            SkidFling(player)
-            task.wait(0.1) -- Brief wait between targets
-        end)
-    end
-end
-
--- Spin, Godmode, and Fling Update Loop
-local lastSpinGodmodeUpdate = 0
-RunService.Heartbeat:Connect(function(dt)
-    if tick() - lastSpinGodmodeUpdate < 0.05 then return end
-    lastSpinGodmodeUpdate = tick()
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        local root = char.HumanoidRootPart
-        if spinEnabled then
-            pcall(function()
-                root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(spinSpeed * dt * math.random(0.9, 1.1)), 0)
+                -- if nothing left, stop
+                if CountSelectedTargets() == 0 then
+                    FlingActive = false
+                    if flingLoop then flingLoop:Disconnect() flingLoop = nil end
+                    Rayfield:Notify({Title="Fling Stopped", Content="No valid targets left", Duration=2})
+                end
             end)
-        end
-        if godmodeEnabled then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health < hum.MaxHealth then
-                pcall(function()
-                    hum.Health = math.min(hum.Health + (hum.MaxHealth * 0.1), hum.MaxHealth)
-                end)
-            end
-        end
-        if flingEnabled then
-            applyFling()
+        else
+            if flingLoop then flingLoop:Disconnect() flingLoop = nil end
+            Rayfield:Notify({Title="Fling Stopped", Content="Kamikaze fling stopped", Duration=2})
         end
     end
-end)
+})
 
--- AUTO RETOGGLE ON DEATH
+-- Apply settings on respawn
 LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(math.random(0.5, 1.5))
+    task.wait(0.8)
     pcall(function()
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
-            hum.WalkSpeed = math.clamp(movementValues.WalkSpeed, 16, 100)
+            hum.WalkSpeed = movementValues.WalkSpeed
             hum.UseJumpPower = false
-            hum.JumpHeight = math.clamp(movementValues.JumpHeight, 7, 50)
+            hum.JumpHeight = movementValues.JumpHeight
         end
-        if prevToggles.Flight then
-            flying = true
-            task.spawn(startFlight)
-        end
-        if prevToggles.NoClip then
-            enableNoClip()
-        end
+        if prevToggles.Flight then flying = true task.spawn(startFlight) end
+        if prevToggles.NoClip then enableNoClip() end
         infiniteJumpEnabled = prevToggles.InfiniteJump
-        spinEnabled = prevToggles.Spin
-        godmodeEnabled = prevToggles.Godmode
-        flingEnabled = prevToggles.Fling
-        hitboxESPEnabled = prevToggles.HitboxESP
-        nameESPEnabled = prevToggles.NameESP
-        healthESPEnabled = prevToggles.HealthESP
-        distanceESPEnabled = prevToggles.DistanceESP
     end)
 end)
 
--- Cleanup on script termination
-game:BindToClose(function()
-    pcall(function()
-        if espConn then espConn:Disconnect() end
-        disableNoClip()
-        for _, data in pairs(espObjects) do
-            if data.Highlight then data.Highlight:Destroy() end
-            if data.Name then data.Name:Destroy() end
-            if data.Health then data.Health:Destroy() end
-            if data.Distance then data.Distance:Destroy() end
-        end
-        if bodyVel then bodyVel:Destroy() end
-        workspace.FallenPartsDestroyHeight = getgenv().FPDH
-    end)
-end)
+-- Final refresh & notify
+refreshDropdown()
+Rayfield:Notify({Title="Loaded", Content="Mod Menu loaded (Kamikaze Fling active)", Duration=3})
