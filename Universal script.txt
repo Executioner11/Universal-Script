@@ -480,5 +480,4 @@ end)
 
 -- Final refresh & notify
 refreshDropdown()
-Rayfield:Notify({Title="Loaded", Content="Mod Menu loaded (Kamikaze Fling active)", Duration=3})
-
+Rayfield:Notify({Title="Loaded", Content="Mod Menu loaded (Fling active)", Duration=3})
