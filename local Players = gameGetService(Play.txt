@@ -31,7 +31,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Mod Menu",
     LoadingTitle = "Mod Menu",
-    LoadingSubtitle = "By Executioner",
+    LoadingSubtitle = "By YourNightMare",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "RayfieldConfigs",
