@@ -262,7 +262,7 @@ Players.PlayerAdded:Connect(function(plr) plr.CharacterAdded:Connect(function() 
 Players.PlayerRemoving:Connect(function(player) espObjects[player.Name] = nil end)
 
 -------------------------
--- TAB 3: Spin & Kamikaze Fling (Fling dropdown DOES NOT SAVE)
+-- TAB 3: Spin & Fling)
 -------------------------
 local SpinTab = Window:CreateTab("Spin & Fling", 4483362458)
 
@@ -370,8 +370,8 @@ Players.PlayerAdded:Connect(function()
     refreshDropdown()
 end)
 
--- Kamikaze fling implementation (defensive)
-local function KamikazeFling(target)
+-- fling implementation (defensive)
+local function Fling(target)
     local Character = LocalPlayer.Character
     if not Character then return end
     local hrp = Character:FindFirstChild("HumanoidRootPart")
@@ -408,7 +408,7 @@ local function CountSelectedTargets()
     return count
 end
 
--- Fling toggle (Kamikaze behavior) — replaces old fling
+-- Fling toggle (behavior) — replaces old fling
 SpinTab:CreateToggle({
     Name = "Fling",
     CurrentValue = false,
@@ -425,7 +425,7 @@ SpinTab:CreateToggle({
                 return
             end
 
-            Rayfield:Notify({Title="Fling Started", Content="Kamikaze flinging "..CountSelectedTargets().." target(s)", Duration=2})
+            Rayfield:Notify({Title="Fling Started", Content="Flinging "..CountSelectedTargets().." target(s)", Duration=2})
 
             flingLoop = RunService.Heartbeat:Connect(function(delta)
                 local char = LocalPlayer.Character
@@ -436,11 +436,11 @@ SpinTab:CreateToggle({
                     hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinSpeed * delta), 0)
                 end
 
-                -- attempt to Kamikaze each target
+                -- attempt to fling each target
                 for i = #SelectedTargets, 1, -1 do
                     local target = SelectedTargets[i]
                     if target and target.Parent and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                        KamikazeFling(target)
+                        KFling(target)
                         task.wait(0.06) -- tiny pause to let physics act
                     else
                         -- remove invalid targets
@@ -457,7 +457,7 @@ SpinTab:CreateToggle({
             end)
         else
             if flingLoop then flingLoop:Disconnect() flingLoop = nil end
-            Rayfield:Notify({Title="Fling Stopped", Content="Kamikaze fling stopped", Duration=2})
+            Rayfield:Notify({Title="Fling Stopped", Content="fling stopped", Duration=2})
         end
     end
 })
